@@ -15,17 +15,22 @@ jobs:
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
       - name: setup jdk
+        # JDK 21 runs Gradle and the 1.21.x builds. The 26.1+ build needs
+        # JDK 25, which Gradle's toolchain mechanism auto-provisions (see
+        # build.gradle.kts), so CI doesn't need to install it here.
         uses: actions/setup-java@v5
         with:
-          java-version: '25'
-          distribution: 'microsoft'
+          java-version: '21'
+          distribution: 'temurin'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
       - name: build
         # buildAndCollect is defined per Stonecutter subproject; the
         # unqualified name runs it across all of them, producing one remapped
         # mod jar per MC version under build/libs/<mod.version>/.
-        run: ./gradlew buildAndCollect
+        # 26.1.2 is configured but its fabric-api rendering/networking layout
+        # still needs porting — skip it until that work lands.
+        run: ./gradlew buildAndCollect -x :26.1.2:buildAndCollect
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:

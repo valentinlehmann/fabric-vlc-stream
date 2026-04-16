@@ -16,9 +16,15 @@ public class VLCStream implements ModInitializer {
 	public void onInitialize() {
 		// Register S2C payload types on both sides (the registry is shared).
 		// Must happen before any player connects.
+		//? if newNetworkingNames {
+		/*PayloadTypeRegistry.clientboundPlay().register(VLCScreenPayload.TYPE, VLCScreenPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(VLCPlaybackPayload.TYPE, VLCPlaybackPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(VLCSeekPayload.TYPE, VLCSeekPayload.CODEC);*/
+		//?} else {
 		PayloadTypeRegistry.playS2C().register(VLCScreenPayload.TYPE, VLCScreenPayload.CODEC);
 		PayloadTypeRegistry.playS2C().register(VLCPlaybackPayload.TYPE, VLCPlaybackPayload.CODEC);
 		PayloadTypeRegistry.playS2C().register(VLCSeekPayload.TYPE, VLCSeekPayload.CODEC);
+		//?}
 
 		// Load persisted server config once the server starts — before any
 		// player gets a chance to join.

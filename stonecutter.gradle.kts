@@ -30,4 +30,9 @@ stonecutter parameters {
 
     // >= 26.0: unobfuscated MC, different loom plugin, no mappings
     constants["unobfuscated"] = v.matches(">=26.0.0")
+
+    // >= 26.0: PayloadTypeRegistry statics renamed —
+    //   playS2C/playC2S/configurationS2C/configurationC2S
+    //   → clientboundPlay/serverboundPlay/clientboundConfiguration/serverboundConfiguration
+    constants["newNetworkingNames"] = v.matches(">=26.0.0")
 }

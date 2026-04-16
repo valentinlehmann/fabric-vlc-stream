@@ -70,11 +70,15 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(javaRelease)
 }
 
+// Use Gradle's toolchain mechanism so each Stonecutter version builds with
+// the correct JDK without the developer (or CI) having to pre-install it.
+// 1.21.4/1.21.8/1.21.11 use Java 21; 26.1+ uses Java 25. Gradle will
+// auto-download the JDK on first run.
 java {
     withSourcesJar()
-    val javaVersion = JavaVersion.toVersion(javaRelease)
-    sourceCompatibility = javaVersion
-    targetCompatibility = javaVersion
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(javaRelease))
+    }
 }
 
 tasks.jar {
