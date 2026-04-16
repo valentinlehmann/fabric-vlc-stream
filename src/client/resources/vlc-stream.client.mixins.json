@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "de.valentinlehmann.client.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"ExampleClientMixin",
+		"SoundOptionsScreenMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
