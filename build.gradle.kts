@@ -84,11 +84,16 @@ tasks.jar {
 }
 
 // Collect all version JARs into a single output folder.
+// Unobfuscated Minecraft (26.1+) uses fabric-loom without remapping, so the
+// distributable jar is produced by `jar` rather than `remapJar`. Both task
+// types extend AbstractArchiveTask which exposes `archiveFile`.
 tasks.register<Copy>("buildAndCollect") {
     group = "build"
-    val remapJar = tasks.named("remapJar")
-    from(remapJar.map { (it as Jar).archiveFile })
-    into(rootProject.layout.buildDirectory.dir("libs/${property("mod.version")}"))
+    val modVersion = project.property("mod.version") as String
+    val jarTaskName = if (isUnobfuscated) "jar" else "remapJar"
+    val jarTask = tasks.named(jarTaskName, org.gradle.api.tasks.bundling.AbstractArchiveTask::class)
+    from(jarTask.flatMap { it.archiveFile })
+    into(rootProject.layout.buildDirectory.dir("libs/$modVersion"))
     dependsOn("build")
 }
 
