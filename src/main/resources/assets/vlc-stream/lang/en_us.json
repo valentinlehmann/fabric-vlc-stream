@@ -1,3 +1,5 @@
 {
-  "options.vlc-stream.volume": "VLC Stream"
+  "options.vlc-stream.volume": "VLC Stream",
+  "options.vlc-stream.spatial_audio": "VLC Stream Spatial Audio",
+  "options.vlc-stream.spatial_audio.tooltip": "ON: mix audio per-sample for stereo pan + distance roll-off (can introduce faint hiss on some systems).\nOFF: let VLC play through the OS directly (highest quality, distance-based volume only, no stereo panning).\nTakes effect on the next stream start."
 }

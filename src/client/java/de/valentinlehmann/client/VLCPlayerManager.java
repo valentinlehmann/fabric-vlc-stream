@@ -73,6 +73,16 @@ public final class VLCPlayerManager {
 	 */
 	private static volatile int syncOffsetMillis = 0;
 
+	/** Audio pipeline actually bound to the current libVLC instance. Set in
+	 *  {@link #start()} and not mutable at runtime — libVLC locks its audio
+	 *  configuration once play() runs, so changing mode means restarting. */
+	private static volatile VLCAudioMode activeMode = VLCAudioMode.DIRECT;
+
+	/** Last volume we pushed to libVLC in direct mode. Tracked to avoid
+	 *  spamming {@code libvlc_audio_set_volume} on every render tick when
+	 *  the effective value hasn't changed. */
+	private static int lastDirectVolumePct = -1;
+
 	private VLCPlayerManager() {}
 
 	public static int getFrameWidth() { return FRAME_WIDTH; }
@@ -114,15 +124,25 @@ public final class VLCPlayerManager {
 
 		player.videoSurface().set(surface);
 
-		// Route audio through JavaSound so the Minecraft options slider can
-		// control the volume. Must be done before the first play() — VLC
-		// locks the audio output config once the media starts.
-		VLCAudioManager.open();
-		player.audio().callback(
-				VLCAudioManager.PCM_FORMAT,
-				VLCAudioManager.SAMPLE_RATE,
-				VLCAudioManager.CHANNELS,
-				VLCAudioManager.callback());
+		// The audio pipeline is picked up from the persisted config and
+		// frozen in here: libVLC locks its audio configuration the first
+		// time play() is called, so switching modes later requires restarting
+		// the player. We either register a spatial callback (JavaSound path
+		// with per-sample mixing) or leave VLC's own native output module in
+		// charge (direct path, highest quality but no spatial features).
+		activeMode = VLCAudioManager.getMode();
+		if (activeMode == VLCAudioMode.SPATIAL) {
+			VLCAudioManager.open();
+			player.audio().callback(
+					VLCAudioManager.PCM_FORMAT,
+					VLCAudioManager.SAMPLE_RATE,
+					VLCAudioManager.CHANNELS,
+					VLCAudioManager.callback());
+		} else {
+			// Direct mode — push the current volume into libVLC so the first
+			// frame of playback respects the slider.
+			applyDirectVolume();
+		}
 	}
 
 	public static synchronized boolean isStarted() {
@@ -142,17 +162,29 @@ public final class VLCPlayerManager {
 		// libVLC resets the audio delay on every media change, so we have to
 		// re-apply our compensation after each play() call.
 		applyAudioDelay();
+		// And the volume too — in direct mode libVLC is the one mixing, and
+		// a fresh media session starts at the default volume unless we push
+		// ours back in.
+		if (activeMode == VLCAudioMode.DIRECT) {
+			// Force a re-send on the next applyDirectVolume() call by
+			// invalidating the cached last value.
+			lastDirectVolumePct = -1;
+			applyDirectVolume();
+		}
 	}
 
 	/**
-	 * Push the current effective audio delay to libVLC. The value is the
-	 * known JavaSound output-buffer latency plus the user-tunable
-	 * {@link #syncOffsetMillis}. Positive microseconds tell libVLC "the audio
-	 * you submitted will physically play N µs later," which makes libVLC
-	 * delay its video presentation to match. No-op if the player isn't ready.
+	 * Push the current effective audio delay to libVLC. Only meaningful in
+	 * spatial mode — direct mode lets libVLC drive AV-sync against its own
+	 * native output module, so there's no extra JavaSound latency to
+	 * compensate for. The value is the known JavaSound output-buffer latency
+	 * plus the user-tunable {@link #syncOffsetMillis}. Positive microseconds
+	 * tell libVLC "the audio you submitted will physically play N µs later,"
+	 * which makes libVLC delay its video presentation to match.
 	 */
 	private static void applyAudioDelay() {
 		if (player == null) return;
+		if (activeMode != VLCAudioMode.SPATIAL) return;
 		long micros = VLCAudioManager.getOutputLatencyMicros()
 				+ (long) syncOffsetMillis * 1_000L;
 		try {
@@ -160,6 +192,36 @@ public final class VLCPlayerManager {
 		} catch (Throwable t) {
 			VLCStreamClient.LOGGER.warn("Failed to set audio delay to {} µs", micros, t);
 		}
+	}
+
+	/**
+	 * In direct mode, push the current effective volume — slider × distance
+	 * roll-off — to libVLC's own volume control. No-op in spatial mode
+	 * (the callback mixer already applies both factors per-sample). Called
+	 * every render tick from {@link #onClientTick()} and whenever the slider
+	 * changes; rate-limited by comparing against the last pushed percentage
+	 * so we don't hammer libVLC with identical values.
+	 */
+	static void applyDirectVolume() {
+		if (player == null) return;
+		if (activeMode != VLCAudioMode.DIRECT) return;
+		float effective = VLCAudioManager.getVolume() * VLCAudioManager.computeDistanceGain();
+		int pct = Math.round(effective * 100f);
+		if (pct < 0) pct = 0;
+		if (pct > 100) pct = 100;
+		if (pct == lastDirectVolumePct) return;
+		lastDirectVolumePct = pct;
+		try {
+			player.audio().setVolume(pct);
+		} catch (Throwable t) {
+			VLCStreamClient.LOGGER.warn("Failed to set direct volume to {}%", pct, t);
+		}
+	}
+
+	/** Called once per client tick to keep libVLC's volume in sync with the
+	 *  listener's distance from the screen. No-op in spatial mode. */
+	public static void onClientTick() {
+		if (activeMode == VLCAudioMode.DIRECT) applyDirectVolume();
 	}
 
 	/** Returns the user's current sync-offset tuning, in milliseconds. */

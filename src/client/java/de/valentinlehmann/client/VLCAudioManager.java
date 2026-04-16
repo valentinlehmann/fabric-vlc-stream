@@ -10,25 +10,29 @@ import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 
 /**
- * Routes VLC audio through the JVM's JavaSound output and applies a simple
- * world-space mix so the stream sounds like it's coming from the screen's
- * position: volume rolls off with distance and stereo pans according to
- * where the screen sits relative to the listener's facing direction.
+ * Owns the chosen audio pipeline — either <em>direct</em> (VLC plays through
+ * its own native output) or <em>spatial</em> (audio is captured via a libVLC
+ * callback, mixed into a world-space stereo image, and pushed out through a
+ * JavaSound line).
  *
- * <p>Threading: the {@link AudioCallback#play} invocation runs on libVLC's
- * audio thread, which is not the render thread. It reads the listener pose
- * (updated once per frame by the render hook via {@link #updateListener}),
- * the screen config (via {@link VLCScreenState}), and the master volume
- * (via {@link #volume}). All reads are through volatile or atomic state, so
- * no locking is needed.
+ * <p>In <em>spatial</em> mode the pipeline applies:
+ * <ul>
+ *   <li>Linear distance roll-off from 1.0 at the screen down to 0.0 at the
+ *       configured hearing distance.</li>
+ *   <li>Constant-power equal-angle pan based on the horizontal angle between
+ *       the listener's forward vector and the vector to the source.</li>
+ *   <li>The master volume slider.</li>
+ * </ul>
  *
- * <p>Attenuation model: linear roll-off from 1.0 at distance 0 to 0.0 at
- * {@code hearingDistance}. Past that, silent.
+ * <p>In <em>direct</em> mode no callback is registered. Volume is forwarded
+ * straight to {@code libvlc_audio_set_volume}; distance attenuation is applied
+ * on top of that by {@link VLCPlayerManager} scaling the per-frame volume
+ * before handing it to libVLC. Stereo panning is not available — the output
+ * is whatever the source is, mixed by VLC's own output module.
  *
- * <p>Panning model: constant-power equal-angle pan, computed from the
- * horizontal angle between the listener's forward vector and the vector to
- * the source. Vertical position does not affect panning (no HRTF), only
- * distance attenuation.
+ * <p>Threading: listener pose, volume and the active mode are written from
+ * the client/render thread and read from libVLC's audio thread. All shared
+ * state is volatile so no locking is needed for the hot path.
  */
 public final class VLCAudioManager {
 
@@ -39,10 +43,12 @@ public final class VLCAudioManager {
 	private static final int BYTES_PER_CHANNEL_SAMPLE = 2;
 	private static final int BYTES_PER_FRAME = CHANNELS * BYTES_PER_CHANNEL_SAMPLE;
 
-	/** Target line-buffer latency. Small enough that the warm-up fill is
-	 *  negligible and write() backpressure paces VLC tightly; large enough
-	 *  that a brief render-thread stall doesn't underrun. */
-	private static final int LINE_BUFFER_MS = 30;
+	/** Target line-buffer latency for spatial mode. Kept large enough that a
+	 *  brief GC pause can't drain the ring — 30 ms was too tight and caused
+	 *  faint high-frequency hiss from intermittent underruns — but small
+	 *  enough that write() backpressure still paces VLC to the soundcard
+	 *  clock, which is what libVLC's AV-sync latches onto. */
+	private static final int LINE_BUFFER_MS = 80;
 
 	private VLCAudioManager() {}
 
@@ -50,13 +56,16 @@ public final class VLCAudioManager {
 	/** Actual size of the line's internal ring in bytes — read back after
 	 *  {@link SourceDataLine#open} since the mixer may round it up. */
 	private static int lineBufferBytes;
-	/** Scratch buffer reused across audio callbacks to avoid per-frame
-	 *  allocation. Sized up lazily. */
+	/** Scratch buffers reused across callbacks to avoid per-tick allocation. */
+	private static byte[] readBuffer = new byte[0];
 	private static byte[] mixBuffer = new byte[0];
 
 	/** 0.0–1.0 linear gain, the master volume slider. Volatile because the
 	 *  options screen writes from the client thread and VLC reads here. */
 	private static volatile float volume = 1.0f;
+	private static volatile VLCAudioMode mode = VLCAudioMode.DIRECT;
+	/** True once {@link #open()} has prepared the JavaSound line. Only
+	 *  meaningful in {@link VLCAudioMode#SPATIAL} mode. */
 	private static volatile boolean opened = false;
 
 	// Listener pose, written from the render thread once per frame.
@@ -66,7 +75,7 @@ public final class VLCAudioManager {
 	/** Yaw in degrees, Minecraft convention (0 = looking +Z). */
 	private static volatile float listenerYaw;
 
-	/** Called from the render hook every frame — audio thread reads these. */
+	/** Called from the render hook every frame — spatial audio thread reads these. */
 	public static void updateListener(double x, double y, double z, float yawDegrees) {
 		listenerX = x;
 		listenerY = y;
@@ -74,33 +83,63 @@ public final class VLCAudioManager {
 		listenerYaw = yawDegrees;
 	}
 
-	/** Apply a new master volume (0.0–1.0). Safe to call from any thread. */
+	/** Apply a new master volume (0.0–1.0). Safe to call from any thread. In
+	 *  direct mode the value is also forwarded to libVLC. */
 	public static void setVolume(float v) {
 		if (v < 0f) v = 0f;
 		if (v > 1f) v = 1f;
 		volume = v;
+		if (mode == VLCAudioMode.DIRECT) {
+			VLCPlayerManager.applyDirectVolume();
+		}
 	}
 
 	public static float getVolume() {
 		return volume;
 	}
 
+	public static VLCAudioMode getMode() {
+		return mode;
+	}
+
+	/** Set the audio pipeline. Takes effect on the next stream start —
+	 *  libVLC locks audio configuration once media begins playing. */
+	public static void setMode(VLCAudioMode m) {
+		if (m == null) m = VLCAudioMode.DIRECT;
+		mode = m;
+	}
+
 	/**
-	 * Expected output latency in microseconds — the time between when VLC hands
-	 * us a sample in the audio callback and when that sample physically leaves
-	 * the speakers. Corresponds to the JavaSound line buffer (which we keep
-	 * full, see {@link #open}). Does not include whatever additional latency
-	 * the OS audio stack adds downstream — use the user-tunable offset in
-	 * {@link VLCPlayerManager#setSyncOffsetMillis} for that.
-	 *
-	 * <p>Returns 0 if the line hasn't been opened yet.
+	 * Compute the world-space distance gain for the current listener pose.
+	 * Used by direct mode so {@link VLCPlayerManager} can scale libVLC's
+	 * volume per frame, giving a simple distance roll-off without per-sample
+	 * mixing. Returns a value in [0, 1].
+	 */
+	public static float computeDistanceGain() {
+		VLCScreenState.Config cfg = VLCScreenState.get();
+		double dx = cfg.x() - listenerX;
+		double dy = cfg.y() - listenerY;
+		double dz = cfg.z() - listenerZ;
+		double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+		float hearing = cfg.hearingDistance();
+		if (hearing <= 0f || distance >= hearing) return 0f;
+		return (float) (1.0 - distance / hearing);
+	}
+
+	/**
+	 * Expected output latency in microseconds for <em>spatial</em> mode —
+	 * the time between libVLC handing us a sample and that sample physically
+	 * leaving the speakers. Corresponds to the JavaSound line buffer which
+	 * we keep full (see {@link #open}). Returns 0 in direct mode or before
+	 * the line is opened; direct mode does its own AV sync via libVLC.
 	 */
 	public static long getOutputLatencyMicros() {
 		if (!opened || lineBufferBytes == 0) return 0;
 		return (long) lineBufferBytes * 1_000_000L / ((long) SAMPLE_RATE * BYTES_PER_FRAME);
 	}
 
-	/** Open the output line. Called once after the media player is created. */
+	/** Open the JavaSound output line. Only used in {@link VLCAudioMode#SPATIAL}
+	 *  mode; direct mode never opens a line at all. */
 	public static synchronized void open() {
 		if (opened) return;
 		try {
@@ -113,10 +152,9 @@ public final class VLCAudioManager {
 
 			DataLine.Info info = new DataLine.Info(SourceDataLine.class, fmt);
 			line = (SourceDataLine) javax.sound.sampled.AudioSystem.getLine(info);
-			// Small line buffer so the warm-up fill doesn't put audio noticeably
-			// behind video. Once full, write() blocks and paces VLC's audio
-			// callback to the soundcard clock — which is exactly what we want
-			// libVLC's AV-sync to latch onto.
+			// Size the ring for LINE_BUFFER_MS of audio. Large enough to absorb
+			// GC pauses without underrunning; small enough that write() still
+			// paces VLC's audio thread against the soundcard clock.
 			int requested = (SAMPLE_RATE * LINE_BUFFER_MS / 1000) * BYTES_PER_FRAME;
 			line.open(fmt, requested);
 			lineBufferBytes = line.getBufferSize();
@@ -129,7 +167,7 @@ public final class VLCAudioManager {
 			line.start();
 			opened = true;
 			VLCStreamClient.LOGGER.info(
-					"VLC audio output opened: {} Hz, {} ch, S16N, line buffer {} bytes (~{} ms)",
+					"VLC spatial audio output opened: {} Hz, {} ch, S16N, line buffer {} bytes (~{} ms)",
 					SAMPLE_RATE, CHANNELS, lineBufferBytes,
 					lineBufferBytes * 1000 / (SAMPLE_RATE * BYTES_PER_FRAME));
 		} catch (LineUnavailableException e) {
@@ -153,7 +191,8 @@ public final class VLCAudioManager {
 		}
 	}
 
-	/** Returns the {@link AudioCallback} to hand to {@link uk.co.caprica.vlcj.player.base.AudioApi#callback}. */
+	/** Returns the {@link AudioCallback} to hand to
+	 *  {@link uk.co.caprica.vlcj.player.base.AudioApi#callback} in spatial mode. */
 	public static AudioCallback callback() {
 		return new Callback();
 	}
@@ -256,17 +295,23 @@ public final class VLCAudioManager {
 			if (l == null) return;
 			int bytes = sampleCount * BYTES_PER_FRAME;
 
-			byte[] in = samples.getByteArray(0, bytes);
+			// Copy from native memory into our reusable byte[] instead of
+			// allocating a fresh array each callback. JNA's getByteArray()
+			// allocates every invocation, which on a hot path 50+ times per
+			// second adds enough GC pressure to trigger micro-pauses, which
+			// show up as faint hiss when the line buffer briefly underruns.
+			if (readBuffer.length < bytes) readBuffer = new byte[bytes];
+			samples.read(0, readBuffer, 0, bytes);
+
 			if (mixBuffer.length < bytes) mixBuffer = new byte[bytes];
-			byte[] out = mixBuffer;
-			mixSpatial(in, out, bytes);
+			mixSpatial(readBuffer, mixBuffer, bytes);
 			// Blocking write by design: it paces VLC's audio thread to the
 			// soundcard clock, which libVLC then uses as the AV-sync master.
 			// Dropping samples here would silently desync audio from video.
 			// The line buffer is pre-filled with silence in open(), so the
 			// very first write already blocks and there's no startup race
 			// where VLC's "audio submitted" clock outruns physical playout.
-			l.write(out, 0, bytes);
+			l.write(mixBuffer, 0, bytes);
 		}
 
 		@Override public void pause(MediaPlayer mediaPlayer, long pts) {

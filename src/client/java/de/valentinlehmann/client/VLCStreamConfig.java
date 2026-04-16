@@ -18,6 +18,7 @@ public final class VLCStreamConfig {
 	private static final String FILE_NAME = "vlc-stream.properties";
 	private static final String KEY_VOLUME = "volume";
 	private static final String KEY_SYNC_OFFSET_MS = "sync_offset_ms";
+	private static final String KEY_AUDIO_MODE = "audio_mode";
 
 	private VLCStreamConfig() {}
 
@@ -31,6 +32,7 @@ public final class VLCStreamConfig {
 		if (!Files.exists(p)) {
 			VLCAudioManager.setVolume(1.0f);
 			VLCPlayerManager.setSyncOffsetMillis(0);
+			VLCAudioManager.setMode(VLCAudioMode.DIRECT);
 			return;
 		}
 		try {
@@ -48,12 +50,14 @@ public final class VLCStreamConfig {
 			} catch (NumberFormatException nfe) {
 				VLCPlayerManager.setSyncOffsetMillis(0);
 			}
+			VLCAudioManager.setMode(
+					VLCAudioMode.parse(props.getProperty(KEY_AUDIO_MODE), VLCAudioMode.DIRECT));
 		} catch (IOException e) {
 			VLCStreamClient.LOGGER.warn("Could not read {}", p, e);
 		}
 	}
 
-	/** Persist the current volume and sync offset to disk. */
+	/** Persist the current volume, sync offset and audio mode to disk. */
 	public static void save() {
 		Path p = configPath();
 		try {
@@ -61,6 +65,7 @@ public final class VLCStreamConfig {
 			java.util.Properties props = new java.util.Properties();
 			props.setProperty(KEY_VOLUME, Float.toString(VLCAudioManager.getVolume()));
 			props.setProperty(KEY_SYNC_OFFSET_MS, Integer.toString(VLCPlayerManager.getSyncOffsetMillis()));
+			props.setProperty(KEY_AUDIO_MODE, VLCAudioManager.getMode().name());
 			try (var out = Files.newOutputStream(p)) {
 				props.store(out, "vlc-stream client settings");
 			}

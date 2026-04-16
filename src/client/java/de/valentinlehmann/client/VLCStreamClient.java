@@ -5,6 +5,7 @@ import de.valentinlehmann.VLCScreenPayload;
 import de.valentinlehmann.VLCSeekPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 //? if newFabricRendering {
@@ -90,5 +91,12 @@ public class VLCStreamClient implements ClientModInitializer {
 		});
 
 		WorldRenderEvents.AFTER_ENTITIES.register(VLCScreenRenderer::render);
+
+		// Direct-mode audio needs periodic distance-gain updates. The render
+		// hook can't do it (it updates listener pose but would hammer libVLC
+		// at the frame rate); a 20-Hz client tick is plenty for distance
+		// roll-off to feel smooth. Spatial mode no-ops this — its mixing
+		// already applies distance per sample.
+		ClientTickEvents.END_CLIENT_TICK.register(client -> VLCPlayerManager.onClientTick());
 	}
 }

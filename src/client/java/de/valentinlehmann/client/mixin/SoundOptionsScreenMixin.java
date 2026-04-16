@@ -1,6 +1,7 @@
 package de.valentinlehmann.client.mixin;
 
 import de.valentinlehmann.client.VLCAudioManager;
+import de.valentinlehmann.client.VLCAudioMode;
 import de.valentinlehmann.client.VLCStreamConfig;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
@@ -37,7 +38,7 @@ public abstract class SoundOptionsScreenMixin extends OptionsSubScreen {
 	private void vlcstream$addVolumeSlider(CallbackInfo ci) {
 		if (this.list == null) return;
 
-		OptionInstance<Double> option = new OptionInstance<>(
+		OptionInstance<Double> volumeOption = new OptionInstance<>(
 				"options.vlc-stream.volume",
 				OptionInstance.noTooltip(),
 				SoundOptionsScreenMixin::vlcstream$label,
@@ -48,7 +49,24 @@ public abstract class SoundOptionsScreenMixin extends OptionsSubScreen {
 					VLCStreamConfig.save();
 				});
 
-		this.list.addBig(option);
+		this.list.addBig(volumeOption);
+
+		// Audio pipeline toggle. Changes only take effect on the next stream
+		// start (libVLC freezes audio configuration on play()), which the
+		// label makes explicit — a tooltip alone is easy to miss. Users are
+		// more likely to try switching when they're not currently watching
+		// something, so the restart-required caveat is not a big friction.
+		OptionInstance<Boolean> spatialOption = OptionInstance.createBoolean(
+				"options.vlc-stream.spatial_audio",
+				OptionInstance.cachedConstantTooltip(
+						Component.translatable("options.vlc-stream.spatial_audio.tooltip")),
+				VLCAudioManager.getMode() == VLCAudioMode.SPATIAL,
+				value -> {
+					VLCAudioManager.setMode(value ? VLCAudioMode.SPATIAL : VLCAudioMode.DIRECT);
+					VLCStreamConfig.save();
+				});
+
+		this.list.addBig(spatialOption);
 	}
 
 	@Unique
