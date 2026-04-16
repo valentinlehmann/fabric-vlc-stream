@@ -4,13 +4,16 @@ import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.Tesselator;
-//? if newRendering {
+//? if newFabricRendering {
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
+//?} else {
+/*import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;*/
+//?}
+//? if newRendering {
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 //?} else {
-/*import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.client.renderer.RenderType;*/
+/*import net.minecraft.client.renderer.RenderType;*/
 //?}
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -43,7 +46,7 @@ public final class VLCScreenRenderer {
 		VLCScreenState.Config cfg = VLCScreenState.get();
 		if (!cfg.enabled()) return;
 		if (!VLCPlayerManager.uploadIfDirty()) return;
-		//? if newRendering {
+		//? if newFabricRendering {
 		PoseStack matrices = ctx.matrices();
 		//?} else {
 		/*PoseStack matrices = ctx.matrixStack();*/

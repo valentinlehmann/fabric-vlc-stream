@@ -9,14 +9,18 @@ stonecutter active "1.21.11" /* [SC] DO NOT EDIT */
 stonecutter parameters {
     val v = node.metadata.parsed
 
-    // >= 1.21.9: Major rendering rework + method renames:
-    //   - RenderType moved to rendertype subpackage, factories in RenderTypes
-    //   - WorldRenderEvents/Context moved to .world subpackage
-    //   - Camera: position()/yRot() (was getPosition()/getYRot())
+    // >= 1.21.10: fabric-api rendering package refactor:
+    //   - WorldRenderEvents/Context moved to rendering.v1.world subpackage
     //   - WorldRenderContext: matrices() (was matrixStack())
+    // Targets: 1.21.4/1.21.8 = false, 1.21.10/1.21.11/26.1.2 = true
+    constants["newFabricRendering"] = v.matches(">=1.21.10")
+
+    // >= 1.21.11: Mojang-side rendering rework + method renames:
+    //   - RenderType moved to rendertype subpackage, factories in RenderTypes
+    //   - Camera: position()/yRot() (was getPosition()/getYRot())
     //   - NativeImage: getPointer() added
-    // Targets: 1.21.4/1.21.8 = false, 1.21.11/26.1.2 = true
-    constants["newRendering"] = v.matches(">=1.21.9")
+    // Targets: 1.21.4/1.21.8/1.21.10 = false, 1.21.11/26.1.2 = true
+    constants["newRendering"] = v.matches(">=1.21.11")
 
     // >= 1.21.11: ResourceLocation renamed to Identifier
     constants["hasIdentifier"] = v.matches(">=1.21.11")

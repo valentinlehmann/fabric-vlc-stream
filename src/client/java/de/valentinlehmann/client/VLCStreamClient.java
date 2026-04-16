@@ -7,7 +7,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-//? if newRendering {
+//? if newFabricRendering {
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 //?} else {
 /*import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;*/
