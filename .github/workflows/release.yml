@@ -1,0 +1,81 @@
+# Build all per-MC-version jars on a `v*` tag push and publish each one as
+# its own Modrinth version. One workflow run → one tag → N Modrinth versions
+# (one per supported Minecraft version), all sharing the same mod.version.
+#
+# Required repo configuration:
+#   - secret  MODRINTH_TOKEN        — a Modrinth personal access token with
+#                                     "Create version" scope on the project.
+#   - var     MODRINTH_PROJECT_ID   — the Modrinth project slug or ID
+#                                     (Settings → Variables → Actions).
+
+name: release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: derive mod version from tag
+        id: version
+        # `v1.2.3` → `1.2.3`. The override is passed to Gradle so every jar
+        # and the buildAndCollect output folder are named after the tag.
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          version="${ref#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building mod version: $version"
+      - name: build all version jars
+        # Same exclusion list as build.yml — 26.1.2 still needs porting.
+        run: ./gradlew buildAndCollect -x :26.1.2:buildAndCollect -Pmod.version=${{ steps.version.outputs.version }}
+      - name: upload jars
+        uses: actions/upload-artifact@v7
+        with:
+          name: jars
+          path: build/libs/${{ steps.version.outputs.version }}/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      # Don't cancel sibling publishes if one fails — the others are
+      # independent uploads.
+      fail-fast: false
+      matrix:
+        # Mirror the Stonecutter version list in settings.gradle.kts, minus
+        # 26.1.2 which we don't build yet.
+        mc-version: ['1.21.4', '1.21.8', '1.21.10', '1.21.11']
+    steps:
+      - name: download jars
+        uses: actions/download-artifact@v6
+        with:
+          name: jars
+          path: jars
+      - name: publish ${{ matrix.mc-version }} to modrinth
+        uses: Kira-NT/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          # buildAndCollect names jars `<archivesName>-<modVersion>+<mcVersion>.jar`.
+          files: jars/vlc-stream-*+${{ matrix.mc-version }}.jar
+          name: vlc-stream ${{ needs.build.outputs.version }} for ${{ matrix.mc-version }}
+          version: ${{ needs.build.outputs.version }}+${{ matrix.mc-version }}
+          version-type: release
+          loaders: fabric
+          game-versions: ${{ matrix.mc-version }}
+          dependencies: |
+            fabric-api(required)
