@@ -2,14 +2,15 @@
 	"schemaVersion": 1,
 	"id": "vlc-stream",
 	"version": "${version}",
-	"name": "vlc-stream",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"name": "VLC Stream",
+	"description": "Stream anything VLC can open — Twitch, YouTube via yt-dlp, IPTV, RTSP cameras, local files — onto a flat screen in your Minecraft world.",
 	"authors": [
-		"Me!"
+		"Valentin Lehmann"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/valentinlehmann/fabric-vlc-stream",
+		"sources": "https://github.com/valentinlehmann/fabric-vlc-stream",
+		"issues": "https://github.com/valentinlehmann/fabric-vlc-stream/issues"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/vlc-stream/icon.png",
@@ -34,5 +35,10 @@
 		"minecraft": "${mc_dep}",
 		"java": ">=${java_version}",
 		"fabric-api": "*"
+	},
+	"custom": {
+		"mc-publish": {
+			"modrinth": "vlc-stream"
+		}
 	}
 }

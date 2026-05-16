@@ -2,11 +2,14 @@
 # its own Modrinth version. One workflow run → one tag → N Modrinth versions
 # (one per supported Minecraft version), all sharing the same mod.version.
 #
+# Almost every publish field — project id, name, version, loaders, game
+# versions, dependencies — is read from each jar's `fabric.mod.json` by
+# mc-publish, so this workflow only has to hand it the token and a file
+# glob. See the `custom.mc-publish` block in src/main/resources/fabric.mod.json.
+#
 # Required repo configuration:
-#   - secret  MODRINTH_TOKEN        — a Modrinth personal access token with
-#                                     "Create version" scope on the project.
-#   - var     MODRINTH_PROJECT_ID   — the Modrinth project slug or ID
-#                                     (Settings → Variables → Actions).
+#   - secret  MODRINTH_TOKEN — a Modrinth personal access token with
+#                              "Create version" scope on the project.
 
 name: release
 on:
@@ -68,14 +71,10 @@ jobs:
       - name: publish ${{ matrix.mc-version }} to modrinth
         uses: Kira-NT/mc-publish@v3.3
         with:
-          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           # buildAndCollect names jars `<archivesName>-<modVersion>+<mcVersion>.jar`.
+          # Each jar carries its own fabric.mod.json with the exact MC version
+          # pinned in `depends.minecraft`, so mc-publish auto-resolves name,
+          # version, modrinth-id, game-versions, loaders, and dependencies
+          # from the jar itself.
           files: jars/vlc-stream-*+${{ matrix.mc-version }}.jar
-          name: vlc-stream ${{ needs.build.outputs.version }} for ${{ matrix.mc-version }}
-          version: ${{ needs.build.outputs.version }}+${{ matrix.mc-version }}
-          version-type: release
-          loaders: fabric
-          game-versions: ${{ matrix.mc-version }}
-          dependencies: |
-            fabric-api(required)
